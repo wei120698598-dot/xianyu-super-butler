@@ -16,6 +16,7 @@ const CardList = lazy(() => import('./components/CardList'));
 const ItemList = lazy(() => import('./components/ItemList'));
 const ProductAutomation = lazy(() => import('./components/ProductAutomation'));
 const AIReply = lazy(() => import('./components/AIReply'));
+const NewAIReply = lazy(() => import('./components/NewAIReply'));
 const Settings = lazy(() => import('./components/Settings'));
 const Keywords = lazy(() => import('./components/Keywords'));
 const MessageManagement = lazy(() => import('./components/MessageManagement'));
@@ -41,6 +42,7 @@ const pageLabels: Record<string, string> = {
   messages: '消息中心',
   'auto-reply': '自动回复',
   'ai-reply': 'AI 回复',
+  'new-ai-reply': '新AI自动回复',
   'product-automation': '商品自动化',
   notifications: '通知与日志',
   settings: '系统设置',
@@ -597,6 +599,9 @@ const App: React.FC = () => {
           </section>
           <section hidden={activeTab !== 'ai-reply'}>
             <Suspense fallback={activeTab === 'ai-reply' ? <PageLoader /> : null}><AIReply /></Suspense>
+          </section>
+          <section hidden={activeTab !== 'new-ai-reply'}>
+            <Suspense fallback={activeTab === 'new-ai-reply' ? <PageLoader /> : null}><NewAIReply /></Suspense>
           </section>
           <section hidden={activeTab !== 'messages'} className="h-full min-h-0">
             <Suspense fallback={activeTab === 'messages' ? <PageLoader /> : null}>

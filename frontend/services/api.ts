@@ -1,4 +1,4 @@
-import request, { get, post, put, del, patch } from '../lib/request';
+import request, { get, post, put, del, patch, API_BASE } from '../lib/request';
 import {
   LoginResponse, AccountDetail, Order, PaginatedResponse,
   AdminStats, AdminUser, Card, CardShipment, SystemSettings, ApiResponse, OrderAnalytics,
@@ -9,6 +9,7 @@ import {
   NotificationEventDefinition, NotificationPriorityDefinition,
   MessageFilter, MessageFilterType, AutoReplyLog
   , ChatAccount, ChatConversation, ChatMessage, ProductMaterial,
+  ItemCloneDetail, ItemCloneResult,
   ProductFilterRule, ProductDeleteRule, AutomationTaskRun,
   ProductAutomationResult, ProductDeletePreview, QuickPhrase,
   AnnouncementPayload
@@ -128,6 +129,17 @@ export const generateQRLogin = async (): Promise<{ success: boolean; session_id?
   return post('/qr-login/generate');
 };
 
+export const importChromeCookies = async (): Promise<{
+  success: boolean;
+  message?: string;
+  account_id?: string;
+  is_new_account?: boolean;
+  field_count?: number;
+  missing_fields?: string[];
+}> => {
+  return post('/cookies/import-chrome', {});
+};
+
 export const checkQRLoginStatus = async (sessionId: string): Promise<any> => {
   return get(`/qr-login/check/${sessionId}`);
 };
@@ -232,7 +244,7 @@ export const syncOrders = async (cookieId?: string, status?: string): Promise<an
 
   // 使用 fetch 来发送 FormData
   const token = localStorage.getItem('auth_token');
-  const response = await fetch('/api/orders/refresh', {
+  const response = await fetch(`${API_BASE}/api/orders/refresh`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`
@@ -256,7 +268,7 @@ export const manualShipOrder = async (orderIds: string[], shipMode: 'status_only
 
 export const importOrders = async (data: Partial<Order>[] | FormData): Promise<any> => {
   const isFormData = data instanceof FormData;
-  const response = await fetch('/api/orders/import', {
+  const response = await fetch(`${API_BASE}/api/orders/import`, {
     method: 'POST',
     headers: {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
@@ -339,7 +351,7 @@ export const syncSoldOrders = async (cookieId?: string, days = 7): Promise<any> 
   if (cookieId) formData.append('cookie_id', cookieId);
   formData.append('days', String(days));
 
-  const response = await fetch('/api/orders/sync-sold', {
+  const response = await fetch(`${API_BASE}/api/orders/sync-sold`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
     body: formData
@@ -368,7 +380,7 @@ export const createQuickPhrase = async (
   formData.append('category', category);
   formData.append('sort_order', String(sortOrder));
 
-  const response = await fetch('/quick-phrases', {
+  const response = await fetch(`${API_BASE}/quick-phrases`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
     body: formData
@@ -384,7 +396,7 @@ export const updateQuickPhrase = async (
     if (value !== undefined && value !== null) formData.append(key, String(value));
   });
 
-  const response = await fetch(`/quick-phrases/${id}`, {
+  const response = await fetch(`${API_BASE}/quick-phrases/${id}`, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
     body: formData
@@ -451,7 +463,7 @@ export const polishItems = async (cookieId?: string, itemIds?: string[]): Promis
   if (cookieId) formData.append('cookie_id', cookieId);
   if (itemIds?.length) formData.append('item_ids', itemIds.join(','));
 
-  const response = await fetch('/api/items/polish', {
+  const response = await fetch(`${API_BASE}/api/items/polish`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
     body: formData
@@ -519,7 +531,7 @@ export const rateOrders = async (
   formData.append('rate', String(rate));
   formData.append('anonymous', String(anonymous));
 
-  const response = await fetch('/api/orders/rate', {
+  const response = await fetch(`${API_BASE}/api/orders/rate`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
     body: formData
@@ -765,6 +777,30 @@ export const updateProductMaterial = async (
 
 export const deleteProductMaterial = async (materialId: number): Promise<void> => {
   await del(`/product-automation/materials/${materialId}`);
+};
+
+/** 一键克隆：只解析分享链接并预览源商品，不写入素材库。 */
+export const previewItemClone = async (
+  shareText: string,
+  cookieId: string,
+): Promise<ItemCloneDetail> => {
+  const response = await post<{ success: boolean; data: ItemCloneDetail }>(
+    '/product-automation/clone/preview',
+    { share_text: shareText, cookie_id: cookieId },
+  );
+  return response.data;
+};
+
+/** 一键克隆：解析链接、抓取详情并写入素材库草稿。 */
+export const cloneItemFromShare = async (
+  shareText: string,
+  cookieId: string,
+): Promise<ItemCloneResult> => {
+  const response = await post<{ success: boolean; data: ItemCloneResult }>(
+    '/product-automation/clone',
+    { share_text: shareText, cookie_id: cookieId },
+  );
+  return response.data;
 };
 
 export const getProductFilterRules = async (): Promise<ProductFilterRule[]> => {
@@ -1063,6 +1099,56 @@ export const testAIConnection = async (
     reply: result.reply,
   };
 }
+
+export interface NewAIReplySettings {
+  enabled: boolean;
+  backend: 'codebuddy' | 'openai';
+  codebuddy_bin: string;
+  codebuddy_model: string;
+  codebuddy_timeout: number;
+  codebuddy_available: boolean;
+  api_key_configured: boolean;
+  base_url: string;
+  model_name: string;
+  human_wait_seconds: number;
+  manual_mode_timeout: number;
+  toggle_keywords: string;
+  prompt: string;
+}
+
+export const getNewAIReplySettings = async (cookieId: string): Promise<NewAIReplySettings> => {
+  return get(`/new-ai-reply/settings/${cookieId}`);
+};
+
+export const updateNewAIReplySettings = async (
+  settings: NewAIReplySettings & { cookie_id: string; api_key?: string },
+): Promise<ApiResponse> => {
+  return put('/new-ai-reply/settings', {
+    cookie_id: settings.cookie_id,
+    enabled: settings.enabled,
+    backend: settings.backend,
+    codebuddy_bin: settings.codebuddy_bin,
+    codebuddy_model: settings.codebuddy_model,
+    codebuddy_timeout: settings.codebuddy_timeout,
+    api_key: settings.api_key || '',
+    base_url: settings.base_url,
+    model_name: settings.model_name,
+    human_wait_seconds: settings.human_wait_seconds,
+    manual_mode_timeout: settings.manual_mode_timeout,
+    toggle_keywords: settings.toggle_keywords,
+    prompt: settings.prompt,
+  });
+};
+
+export const testNewAIReply = async (payload: {
+  cookie_id: string;
+  message: string;
+  item_title?: string;
+  item_price?: string;
+  item_desc?: string;
+}): Promise<{ message?: string; reply?: string; intent?: string; would_send?: boolean }> => {
+  return post('/new-ai-reply/test', payload, { timeout: 200000 });
+};
 
 // Notification Channels
 export const getNotificationChannels = async (): Promise<{ success: boolean; data: NotificationChannel[] }> => {

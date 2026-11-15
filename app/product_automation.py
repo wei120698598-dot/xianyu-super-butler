@@ -286,6 +286,109 @@ class ProductAutomationService:
             self.db.conn.commit()
             return cursor.rowcount > 0
 
+    def save_clone_material(
+        self, user_id: int, cookie_id: str, detail: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """把分享链接抓到的商品详情写成素材库草稿。
+
+        与筛选规则写入共用 UNIQUE(user_id, cookie_id, source_item_id)：重复克隆
+        同一商品时刷新标题与链接，但保留用户已编辑过的描述、分类、图片和价格，
+        以及已回写的发布状态，避免把人工改动覆盖掉。
+        """
+        self.require_account(user_id, cookie_id)
+        item_id = str(detail.get("item_id") or "").strip()
+        title = str(detail.get("title") or "").strip()
+        if not item_id:
+            raise ValueError("缺少商品 ID")
+        if not title:
+            raise ValueError("源商品没有标题，无法克隆")
+
+        images = _json_list(detail.get("images"))
+        source_url = str(detail.get("source_url") or "").strip() or (
+            f"https://www.goofish.com/item?id={item_id}"
+        )
+        short_url = str(detail.get("share_url") or "").strip() or source_url
+        description = str(detail.get("description") or "").strip()
+        category = str(detail.get("category") or "").strip()
+        price = detail.get("price")
+        trace = f"XYB-{item_id[-8:]}"
+
+        with self.db.lock:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                """
+                SELECT id FROM product_materials
+                WHERE user_id = ? AND cookie_id = ? AND source_item_id = ?
+                """,
+                (user_id, cookie_id, item_id),
+            )
+            created = cursor.fetchone() is None
+            cursor.execute(
+                """
+                INSERT INTO product_materials (
+                    user_id, cookie_id, source_item_id, title, description, category,
+                    price, images, source_url, short_url, publish_status, publish_trace_code
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+                ON CONFLICT(user_id, cookie_id, source_item_id) DO UPDATE SET
+                    title = excluded.title,
+                    description = CASE
+                        WHEN product_materials.description = '' THEN excluded.description
+                        ELSE product_materials.description
+                    END,
+                    category = CASE
+                        WHEN product_materials.category = '' THEN excluded.category
+                        ELSE product_materials.category
+                    END,
+                    price = COALESCE(product_materials.price, excluded.price),
+                    images = CASE
+                        WHEN product_materials.images = '[]' THEN excluded.images
+                        ELSE product_materials.images
+                    END,
+                    source_url = excluded.source_url,
+                    short_url = excluded.short_url,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    user_id,
+                    cookie_id,
+                    item_id,
+                    title,
+                    description,
+                    category,
+                    price,
+                    json.dumps(images, ensure_ascii=False),
+                    source_url,
+                    short_url,
+                    trace,
+                ),
+            )
+            self.db.conn.commit()
+            cursor.execute(
+                """
+                SELECT * FROM product_materials
+                WHERE user_id = ? AND cookie_id = ? AND source_item_id = ?
+                """,
+                (user_id, cookie_id, item_id),
+            )
+            material = _as_dict(cursor, cursor.fetchone())
+
+        material["images"] = _json_list(material.get("images"))
+        summary = f"已克隆「{title}」到素材库" if created else f"已刷新素材「{title}」"
+        self._record_run(
+            user_id,
+            cookie_id,
+            "item_clone",
+            None,
+            "share_link",
+            1,
+            1,
+            1,
+            0,
+            summary,
+            [{"item_id": item_id, "status": "cloned" if created else "refreshed", "reason": summary}],
+        )
+        return {"material": material, "created": created, "summary": summary}
+
     def list_filter_rules(self, user_id: int) -> List[Dict[str, Any]]:
         with self.db.lock:
             cursor = self.db.conn.cursor()

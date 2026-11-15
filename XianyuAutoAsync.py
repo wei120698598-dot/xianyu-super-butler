@@ -4822,6 +4822,118 @@ class XianyuLive:
         except Exception as e:
             logger.error(f"【{self.cookie_id}】更新默认回复图片URL失败: {e}")
 
+    def _new_ai_enabled(self) -> bool:
+        try:
+            from app.new_ai_reply.engine import new_ai_engine
+            return new_ai_engine.is_enabled(self.cookie_id)
+        except Exception as exc:
+            logger.error(f"【{self.cookie_id}】新AI状态读取失败：{type(exc).__name__}")
+            return False
+
+    async def _schedule_new_ai_reply(
+        self, message_data, websocket, chat_id, send_user_id, send_user_name,
+        item_id, send_message, create_time, log_context,
+    ):
+        """Queue the imported reply engine. Returning here must not fall through to the old AI."""
+        from app.new_ai_reply.engine import new_ai_engine
+
+        if new_ai_engine.is_manual_mode(self.cookie_id, chat_id):
+            self._add_reply_decision_log(
+                message_data, **log_context,
+                process_status="skipped",
+                decision_reason="new_ai_manual_mode",
+                reply_strategy="new_ai",
+                send_status="unknown",
+            )
+            logger.info(f"【{self.cookie_id}】会话 {chat_id} 处于新AI人工接管，跳过自动回复")
+            return
+        if not item_id:
+            self._add_reply_decision_log(
+                message_data, **log_context,
+                process_status="skipped",
+                decision_reason="new_ai_missing_item",
+                reply_strategy="new_ai",
+                send_status="unknown",
+            )
+            logger.info(f"【{self.cookie_id}】会话 {chat_id} 新AI不回复：缺少商品ID")
+            return
+        new_ai_engine.remember_buyer(self.cookie_id, chat_id, send_message)
+        log_id = self._add_reply_decision_log(
+            message_data, **log_context,
+            process_status="success",
+            decision_reason="new_ai_queued",
+            reply_strategy="new_ai",
+            send_status="unknown",
+        )
+
+        async def deliver(current):
+            await self._deliver_new_ai_reply(
+                current, websocket, chat_id, send_user_id, item_id, send_message, log_id,
+            )
+
+        new_ai_engine.schedule(self.cookie_id, chat_id, create_time, deliver)
+        logger.info(f"【{self.cookie_id}】会话 {chat_id} 已交给新AI自动回复")
+
+    async def _deliver_new_ai_reply(self, current, websocket, chat_id, send_user_id, item_id, send_message, log_id):
+        from app.new_ai_reply.engine import new_ai_engine
+        from app.new_ai_reply.llm import model_failure_reason
+
+        if not current() or self.ws is None or self.ws is not websocket:
+            self._update_reply_decision_log(
+                log_id, process_status="skipped", decision_reason="new_ai_expired", send_status="unknown",
+            )
+            logger.info(f"【{self.cookie_id}】会话 {chat_id} 新AI不发送：任务已失效或连接已切换")
+            return
+        description = new_ai_engine.item_description(self.cookie_id, item_id)
+        if not description:
+            self._update_reply_decision_log(
+                log_id, process_status="skipped", decision_reason="new_ai_missing_item", send_status="unknown",
+            )
+            logger.info(f"【{self.cookie_id}】会话 {chat_id} 新AI不回复：商品资料不足")
+            return
+        context = new_ai_engine.context_for(self.cookie_id, chat_id, send_message)
+        try:
+            reply, intent = await asyncio.to_thread(
+                new_ai_engine.generate, send_message, description, context,
+            )
+        except Exception as exc:
+            reason = model_failure_reason(exc)
+            self._update_reply_decision_log(
+                log_id, process_status="failed", decision_reason="new_ai_model_failed",
+                error_message=reason, send_status="unknown",
+            )
+            logger.error(f"【{self.cookie_id}】会话 {chat_id} 新AI不回复：{reason}")
+            return
+        if not current() or self.ws is None or self.ws is not websocket:
+            self._update_reply_decision_log(
+                log_id, process_status="skipped", decision_reason="new_ai_expired", send_status="unknown",
+            )
+            logger.info(f"【{self.cookie_id}】会话 {chat_id} 新AI不发送：生成期间连接已切换")
+            return
+        if not reply or reply == "-":
+            self._update_reply_decision_log(
+                log_id, process_status="skipped", decision_reason="new_ai_no_reply", send_status="unknown",
+            )
+            logger.info(f"【{self.cookie_id}】会话 {chat_id} 新AI判断无需回复")
+            return
+        new_ai_engine.expect_echo(self.cookie_id, chat_id, reply, int(time.time() * 1000))
+        new_ai_engine.mark_sending(self.cookie_id, chat_id)
+        try:
+            await self.send_msg(self.ws, chat_id, send_user_id, reply)
+        except Exception as exc:
+            self._update_reply_decision_log(
+                log_id, process_status="failed", decision_reason="send_failed",
+                send_status="failed", error_message=type(exc).__name__,
+            )
+            logger.warning(f"【{self.cookie_id}】会话 {chat_id} 新AI发送失败：{type(exc).__name__}；不自动重发")
+            return
+        new_ai_engine.remember_assistant(self.cookie_id, chat_id, reply, intent)
+        self._update_reply_decision_log(
+            log_id, process_status="success", decision_reason="reply_sent",
+            reply_text=reply, send_status="success",
+        )
+        logger.info(f"【{self.cookie_id}】会话 {chat_id} 新AI回复已提交，意图={intent}，字符数={len(reply)}")
+
     async def get_ai_reply(self, send_user_name: str, send_user_id: str, send_message: str, item_id: str, chat_id: str):
         """获取AI回复"""
         try:
@@ -9600,9 +9712,9 @@ class XianyuLive:
             logger.debug(f"【{self.cookie_id}】读取命中关键词失败: {self._safe_str(error)}")
         return None
 
-    async def _schedule_debounced_reply(self, chat_id: str, message_data: dict, websocket, 
+    async def _schedule_debounced_reply(self, chat_id: str, message_data: dict, websocket,
                                        send_user_name: str, send_user_id: str, send_message: str,
-                                       item_id: str, msg_time: str):
+                                       item_id: str, msg_time: str, create_time: int = 0):
         """
         调度防抖回复：如果用户连续发送消息，等待用户停止发送后再回复最后一条消息
         
@@ -9692,7 +9804,8 @@ class XianyuLive:
                     'send_user_id': send_user_id,
                     'send_message': send_message,
                     'item_id': item_id,
-                    'msg_time': msg_time
+                    'msg_time': msg_time,
+                    'create_time': create_time,
                 },
                 'timer': current_timer
             }
@@ -9731,7 +9844,8 @@ class XianyuLive:
                         last_msg['send_message'],
                         last_msg['item_id'],
                         chat_id,
-                        last_msg['msg_time']
+                        last_msg['msg_time'],
+                        last_msg.get('create_time', 0),
                     )
                     
                 except asyncio.CancelledError:
@@ -9749,7 +9863,7 @@ class XianyuLive:
 
     async def _process_chat_message_reply(self, message_data: dict, websocket, send_user_name: str,
                                          send_user_id: str, send_message: str, item_id: str,
-                                         chat_id: str, msg_time: str):
+                                         chat_id: str, msg_time: str, create_time: int = 0):
         """
         处理聊天消息的回复逻辑（从handle_message中提取出来的核心回复逻辑）
         
@@ -9814,6 +9928,12 @@ class XianyuLive:
 
             # 检查该chat_id是否处于暂停状态
             if pause_manager.is_chat_paused(chat_id, self.cookie_id):
+                if self._new_ai_enabled():
+                    await self._schedule_new_ai_reply(
+                        message_data, websocket, chat_id, send_user_id, send_user_name,
+                        item_id, send_message, create_time, log_context,
+                    )
+                    return
                 remaining_time = pause_manager.get_remaining_pause_time(chat_id, self.cookie_id)
                 remaining_minutes = remaining_time // 60
                 remaining_seconds = remaining_time % 60
@@ -9871,6 +9991,13 @@ class XianyuLive:
                     reply_strategy = "keyword"
                     matched_keyword = self._find_reply_keyword(send_message, item_id)
                 else:
+                    # 新AI开启时独占这条消息，不再调用原 AI 回复或默认回复。
+                    if self._new_ai_enabled():
+                        await self._schedule_new_ai_reply(
+                            message_data, websocket, chat_id, send_user_id, send_user_name,
+                            item_id, send_message, create_time, log_context,
+                        )
+                        return
                     # 2. 关键词匹配失败，如果AI开关打开，尝试AI回复
                     reply = await self.get_ai_reply(send_user_name, send_user_id, send_message, item_id, chat_id)
                     if reply:
@@ -10373,6 +10500,18 @@ class XianyuLive:
             # 判断消息方向
             if send_user_id == self.myid:
                 logger.info(f"[{msg_time}] 【手动发出】 商品({item_id}): {send_message}")
+                if self._new_ai_enabled():
+                    from app.new_ai_reply.engine import new_ai_engine
+                    kind = new_ai_engine.note_seller(self.cookie_id, chat_id, send_message, create_time)
+                    if kind == "echo":
+                        logger.info(f"【{self.cookie_id}】新AI回复回声，不视为人工接管")
+                        return
+                    if kind == "toggle-on":
+                        logger.info(f"【{self.cookie_id}】会话 {chat_id} 已进入新AI人工接管")
+                    elif kind == "toggle-off":
+                        logger.info(f"【{self.cookie_id}】会话 {chat_id} 已退出新AI人工接管")
+                    else:
+                        logger.info(f"【{self.cookie_id}】会话 {chat_id} 已人工回复，新AI取消待发送内容")
 
                 # 暂停该chat_id的自动回复10分钟
                 pause_manager.pause_chat(chat_id, self.cookie_id)
@@ -10614,7 +10753,8 @@ class XianyuLive:
                 send_user_id=send_user_id,
                 send_message=send_message,
                 item_id=item_id,
-                msg_time=msg_time
+                msg_time=msg_time,
+                create_time=create_time,
             )
 
         except Exception as e:

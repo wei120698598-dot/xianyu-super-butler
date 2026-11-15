@@ -600,6 +600,20 @@ class XianyuSellerAPI:
         )
         return normalize_sku_rows(rows)
 
+    async def get_item_detail(self, item_id: str) -> Dict[str, Any]:
+        """读取买家端商品详情（标题、描述、价格、图片、分类）。
+
+        与 SKU 识别共用 ``mtop.taobao.idle.pc.detail``，返回完整的 ``data``
+        节点，供「一键克隆商品」解析成素材。任意在售或已下架的公开商品都能读，
+        不要求商品属于当前账号。
+        """
+        result = await self._call_buyer(
+            "mtop.taobao.idle.pc.detail",
+            {"itemId": str(item_id)},
+            spm_cnt="a21ybx.item.0.0",
+        )
+        return (result.get("data") or {}) or {}
+
     async def get_expected_order_total(self) -> Optional[int]:
         """读取服务端认定的订单总数，用于校验拉取完整性；失败返回 None。"""
         try:

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   CheckCircle2,
+  Copy,
   ExternalLink,
   FileSearch,
   Link2,
@@ -21,12 +22,15 @@ import {
 import {
   AccountDetail,
   AutomationTaskRun,
+  ItemCloneDetail,
+  ItemCloneResult,
   ProductDeletePreview,
   ProductDeleteRule,
   ProductFilterRule,
   ProductMaterial,
 } from '../types';
 import {
+  cloneItemFromShare,
   compensateProductCards,
   deleteProductDeleteRule,
   deleteProductFilterRule,
@@ -36,6 +40,7 @@ import {
   getProductDeleteRules,
   getProductFilterRules,
   getProductMaterials,
+  previewItemClone,
   previewProductDeleteRule,
   repairProductShortLinks,
   repairPublishedProductIds,
@@ -54,9 +59,10 @@ import {
   SectionHeader,
 } from './ui';
 
-type TabKey = 'materials' | 'filters' | 'delete' | 'repairs';
+type TabKey = 'clone' | 'materials' | 'filters' | 'delete' | 'repairs';
 
 const tabs: Array<{ id: TabKey; label: string; icon: React.ElementType }> = [
+  { id: 'clone', label: '一键克隆', icon: Copy },
   { id: 'materials', label: '素材库', icon: Archive },
   { id: 'filters', label: '筛选规则', icon: Search },
   { id: 'delete', label: '删除计划', icon: Trash2 },
@@ -105,12 +111,19 @@ const normalizeImage = (value?: string) => {
   return value.startsWith('//') ? `https:${value}` : value;
 };
 
+const cloneErrorText = (error: unknown) => {
+  const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  return error instanceof Error ? error.message : '未知错误';
+};
+
 const taskNames: Record<string, string> = {
   material_filter: '素材筛选',
   delete_preview: '删除预演',
   published_id_repair: '商品 ID 回写',
   short_link_repair: '链接修复',
   card_compensation: '卡券补偿',
+  item_clone: '一键克隆',
 };
 
 const ProductAutomation: React.FC = () => {
@@ -128,6 +141,11 @@ const ProductAutomation: React.FC = () => {
   const [filterForm, setFilterForm] = useState(emptyFilterForm);
   const [deleteForm, setDeleteForm] = useState(emptyDeleteForm);
   const [preview, setPreview] = useState<ProductDeletePreview | null>(null);
+  const [cloneText, setCloneText] = useState('');
+  const [cloneAccount, setCloneAccount] = useState('');
+  const [cloneDetail, setCloneDetail] = useState<ItemCloneDetail | null>(null);
+  const [cloneResult, setCloneResult] = useState<ItemCloneResult | null>(null);
+  const [cloneBusy, setCloneBusy] = useState(false);
 
   const accountNames = useMemo(
     () => new Map(accounts.map((account) => [
@@ -171,6 +189,9 @@ const ProductAutomation: React.FC = () => {
       }
       if (!deleteForm.cookie_id && accountData[0]) {
         setDeleteForm((current) => ({ ...current, cookie_id: accountData[0].id }));
+      }
+      if (!cloneAccount && accountData[0]) {
+        setCloneAccount(accountData[0].id);
       }
     } catch (error) {
       notify(`商品自动化数据加载失败：${(error as Error).message}`, 'error');
@@ -225,6 +246,42 @@ const ProductAutomation: React.FC = () => {
       notify(`删除失败：${(error as Error).message}`, 'error');
     } finally {
       setBusyKey('');
+    }
+  };
+
+  const runClone = async (previewOnly: boolean) => {
+    if (!cloneText.trim()) {
+      notify('请先粘贴闲鱼分享链接或商品 ID', 'error');
+      return;
+    }
+    if (!cloneAccount) {
+      notify('请选择用于读取商品详情的账号', 'error');
+      return;
+    }
+    setCloneBusy(true);
+    try {
+      if (previewOnly) {
+        const detail = await previewItemClone(cloneText, cloneAccount);
+        setCloneDetail(detail);
+        setCloneResult(null);
+        notify('已解析商品详情，确认无误后点击「一键克隆」写入素材库', 'success');
+      } else {
+        const result = await cloneItemFromShare(cloneText, cloneAccount);
+        setCloneDetail(result.detail);
+        setCloneResult(result);
+        if (result.material) {
+          setMaterials((current) => {
+            const others = current.filter((item) => item.id !== result.material!.id);
+            return [result.material!, ...others];
+          });
+        }
+        notify(result.summary, 'success');
+      }
+      setRuns(await getProductAutomationRuns());
+    } catch (error) {
+      notify(`克隆失败：${cloneErrorText(error)}`, 'error');
+    } finally {
+      setCloneBusy(false);
     }
   };
 
@@ -412,6 +469,161 @@ const ProductAutomation: React.FC = () => {
         items={tabs}
         ariaLabel="商品自动化功能"
       />
+
+      {activeTab === 'clone' && (
+        <section className="space-y-5">
+          <div className="section-panel">
+            <SectionHeader
+              title="一键克隆商品"
+              description="粘贴闲鱼分享链接，自动解析商品 ID 并拉取标题、描述、价格、图片和分类，写入素材库草稿。"
+              icon={Copy}
+            />
+            <div className="space-y-4 p-4">
+              <label className="block text-xs font-bold text-gray-600">
+                闲鱼分享链接 / 商品 ID
+                <textarea
+                  value={cloneText}
+                  onChange={(event) => setCloneText(event.target.value)}
+                  placeholder="【闲鱼】https://m.tb.cn/h.xxxxx?tk=xxxxx HU293 「商品标题」 点击链接直接打开"
+                  rows={3}
+                  className="ios-input mt-1.5 w-full resize-y rounded-md px-3 py-2.5 text-sm"
+                />
+              </label>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="text-xs font-bold text-gray-600">
+                  读取账号
+                  <select
+                    value={cloneAccount}
+                    onChange={(event) => setCloneAccount(event.target.value)}
+                    className="ios-input mt-1.5 w-full rounded-md px-3 py-2.5 text-sm sm:w-64"
+                  >
+                    <option value="">选择账号</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>{accountNames.get(account.id)}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  disabled={cloneBusy}
+                  onClick={() => void runClone(false)}
+                  className="ios-btn-primary flex items-center gap-2 rounded-md px-4 py-2.5 text-sm disabled:opacity-50"
+                >
+                  {cloneBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+                  一键克隆
+                </button>
+                <button
+                  type="button"
+                  disabled={cloneBusy}
+                  onClick={() => void runClone(true)}
+                  className="ios-btn-secondary rounded-md px-4 py-2.5 text-sm disabled:opacity-50"
+                >
+                  仅预览
+                </button>
+              </div>
+              <p className="text-xs text-gray-500">
+                支持淘口令整段文本、m.tb.cn 短链、商品详情页链接或纯商品 ID。克隆结果存为素材库草稿，不会在闲鱼上发布商品。
+              </p>
+            </div>
+          </div>
+
+          {cloneResult && (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold">{cloneResult.summary}</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('materials')}
+                  className="ios-btn-secondary rounded-md px-3 py-1.5 text-xs"
+                >
+                  查看素材库
+                </button>
+              </div>
+            </div>
+          )}
+
+          {cloneDetail && (
+            <div className="section-panel">
+              <SectionHeader
+                title="源商品详情"
+                description={cloneResult ? '以下内容已写入素材库，可在素材库继续编辑。' : '预览结果，确认无误后点击「一键克隆」写入素材库。'}
+                icon={FileSearch}
+              />
+              <div className="grid gap-5 p-4 md:grid-cols-[220px_1fr]">
+                <div className="space-y-2">
+                  <div className="aspect-square overflow-hidden rounded-lg bg-gray-100">
+                    {cloneDetail.images[0] ? (
+                      <img
+                        src={normalizeImage(cloneDetail.images[0])}
+                        alt={cloneDetail.title}
+                        className="h-full w-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-gray-400"><Archive className="h-10 w-10" /></div>
+                    )}
+                  </div>
+                  {cloneDetail.images.length > 1 && (
+                    <div className="flex gap-2 overflow-x-auto">
+                      {cloneDetail.images.slice(1).map((image, index) => (
+                        <img
+                          key={index}
+                          src={normalizeImage(image)}
+                          alt=""
+                          className="h-14 w-14 flex-none rounded object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 space-y-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">{cloneDetail.title}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                      <span className="text-xl font-bold text-red-600">
+                        {cloneDetail.price == null ? '价格未知' : `¥${cloneDetail.price}`}
+                      </span>
+                      {cloneDetail.original_price != null && cloneDetail.original_price !== cloneDetail.price && (
+                        <span className="text-xs text-gray-400 line-through">原价 ¥{cloneDetail.original_price}</span>
+                      )}
+                      {cloneDetail.category && (
+                        <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{cloneDetail.category}</span>
+                      )}
+                      {cloneDetail.item_status && (
+                        <span className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-700">{cloneDetail.item_status}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 sm:grid-cols-3">
+                    <span>商品 ID：<span className="font-mono text-gray-700">{cloneDetail.item_id}</span></span>
+                    <span>卖家：{cloneDetail.seller_nick || '未知'}</span>
+                    <span>图片：{cloneDetail.images.length} 张</span>
+                    {cloneDetail.sku_count > 0 && <span>规格：{cloneDetail.sku_count} 个</span>}
+                    {cloneDetail.transport_fee != null && <span>运费：¥{cloneDetail.transport_fee}</span>}
+                  </div>
+                  {cloneDetail.description && (
+                    <div>
+                      <div className="text-xs font-bold text-gray-600">商品描述</div>
+                      <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 text-sm text-gray-700">
+                        {cloneDetail.description}
+                      </p>
+                    </div>
+                  )}
+                  <a
+                    href={cloneDetail.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                  >
+                    <ExternalLink className="h-3 w-3" /> 打开源商品
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {activeTab === 'materials' && (
         <section className="space-y-4">

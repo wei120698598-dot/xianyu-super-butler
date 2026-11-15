@@ -37,6 +37,7 @@ from app.services.notification_test import (
     notification_test_rate_limiter,
 )
 from app.routers.delivery_block import create_delivery_block_router
+from app.routers.new_ai_reply import create_new_ai_reply_router
 from app.routers.logistics_quote import create_logistics_quote_router
 from app.routers.logistics_agent import create_logistics_agent_router
 from utils.qr_login import qr_login_manager
@@ -378,6 +379,8 @@ else:
 
 app.include_router(create_delivery_block_router(get_current_user, db_manager))
 logger.info("已注册发货拦截规则路由")
+app.include_router(create_new_ai_reply_router(get_current_user, db_manager))
+logger.info("已注册新AI自动回复路由")
 
 app.include_router(create_logistics_quote_router(get_current_user, db_manager))
 logger.info("已注册物流报价解析路由")
@@ -2025,6 +2028,55 @@ def add_cookie(item: CookieIn, current_user: Dict[str, Any] = Depends(get_curren
     except Exception as e:
         log_with_user('error', f"添加Cookie失败: {item.id} - {str(e)}", current_user)
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/cookies/import-chrome")
+async def import_chrome_cookies(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Import only the local Chrome login for goofish.com. Never return cookie values."""
+    from utils.chrome_cookies import ChromeCookieError, read_goofish_cookies
+
+    try:
+        imported = read_goofish_cookies()
+        account_info = await process_qr_login_cookies(
+            imported["cookies"],
+            imported["unb"],
+            current_user,
+        )
+        operation = account_info.pop("_manager_operation", None)
+        await _await_cookie_manager_operation(
+            operation,
+            account_info["account_id"],
+            current_user,
+        )
+    except ChromeCookieError as exc:
+        log_with_user('warning', f"读取 Chrome 闲鱼登录态失败: {exc}", current_user)
+        return {"success": False, "message": str(exc)}
+    except Exception as exc:
+        log_with_user('error', f"导入 Chrome 闲鱼登录态失败: {type(exc).__name__}", current_user)
+        return {"success": False, "message": "读取成功，但保存账号失败，请稍后重试"}
+
+    missing = imported["missing_fields"]
+    expired = imported["expired_fields"]
+    message = "已从本机 Chrome 导入闲鱼登录态"
+    if expired:
+        message += "，其中 " + "、".join(expired) + " 在 Chrome 中已过期"
+    if missing:
+        message += "，且缺少 " + "、".join(missing)
+    log_with_user(
+        'info',
+        f"Chrome 闲鱼登录态已导入: 账号={account_info['account_id']}, "
+        f"字段数={account_info['cookie_field_count']}, 缺少={','.join(missing) or '无'}",
+        current_user,
+    )
+    return {
+        "success": True,
+        "account_id": account_info["account_id"],
+        "is_new_account": account_info["is_new_account"],
+        "field_count": account_info["cookie_field_count"],
+        "missing_fields": missing,
+        "expired_fields": expired,
+        "message": message,
+    }
 
 
 # ============ 带子路径的 /cookies/{cid}/xxx 路由必须在 /cookies/{cid} 之前定义 ============
@@ -5706,6 +5758,78 @@ def compensate_product_cards(
         "success": True,
         "data": product_automation.compensate_cards(current_user["user_id"]),
     }
+
+
+# ==================== 一键克隆商品 API ====================
+
+class ItemCloneIn(BaseModel):
+    share_text: str
+    cookie_id: str
+
+
+def _raise_item_clone_error(error: Exception):
+    from utils import risk_control
+    from utils.item_clone import ItemDetailError, ShareLinkError
+
+    if isinstance(error, PermissionError):
+        raise HTTPException(status_code=403, detail=str(error))
+    if isinstance(error, risk_control.RiskControlBlocked):
+        raise HTTPException(status_code=429, detail=str(error))
+    if isinstance(error, (ShareLinkError, ValueError)):
+        raise HTTPException(status_code=400, detail=str(error))
+    if isinstance(error, LookupError):
+        raise HTTPException(status_code=404, detail=str(error))
+    if isinstance(error, ItemDetailError):
+        raise HTTPException(status_code=502, detail=str(error))
+    logger.exception("一键克隆商品失败")
+    raise HTTPException(status_code=500, detail="一键克隆商品失败")
+
+
+async def _resolve_clone_detail(
+    payload: ItemCloneIn, current_user: Dict[str, Any]
+) -> Dict[str, Any]:
+    from utils.item_clone import ShareLinkError, fetch_item_detail, resolve_share_link
+
+    cookie_id = payload.cookie_id.strip()
+    share_text = payload.share_text.strip()
+    if not share_text:
+        raise ShareLinkError("请粘贴闲鱼分享链接或商品 ID")
+    if cookie_id not in db_manager.get_all_cookies(current_user["user_id"]):
+        raise PermissionError("无权使用该闲鱼账号")
+
+    cookie_info = db_manager.get_cookie_by_id(cookie_id)
+    cookies_str = (cookie_info or {}).get("cookies_str", "")
+    link = await resolve_share_link(share_text)
+    return await fetch_item_detail(cookie_id, cookies_str, link)
+
+
+@app.post("/product-automation/clone/preview")
+async def preview_item_clone(
+    payload: ItemCloneIn,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """只解析链接并预览商品详情，不写入素材库。"""
+    try:
+        return {"success": True, "data": await _resolve_clone_detail(payload, current_user)}
+    except Exception as error:
+        _raise_item_clone_error(error)
+
+
+@app.post("/product-automation/clone")
+async def clone_item_from_share(
+    payload: ItemCloneIn,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """解析分享链接 → 拉取商品详情 → 写入素材库草稿（一键克隆）。"""
+    try:
+        detail = await _resolve_clone_detail(payload, current_user)
+        data = product_automation.save_clone_material(
+            current_user["user_id"], payload.cookie_id.strip(), detail
+        )
+        data["detail"] = detail
+        return {"success": True, "data": data}
+    except Exception as error:
+        _raise_item_clone_error(error)
 
 
 # ==================== 备份和恢复 API ====================

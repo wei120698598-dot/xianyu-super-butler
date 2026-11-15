@@ -1,7 +1,11 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
+// 通过 path-prefix 网关访问时由 VITE_API_BASE 注入前缀（如 /butler）。
+// 直连部署不设置该变量，行为与原来完全一致。
+export const API_BASE: string = import.meta.env.VITE_API_BASE || '';
+
 const request: AxiosInstance = axios.create({
-  baseURL: '',
+  baseURL: API_BASE,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

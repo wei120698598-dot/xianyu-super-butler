@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { API_BASE } from '../lib/request';
 import { AccountDetail, AIReplySettings } from '../types';
 import {
   getAccountDetails,
   updateAccountStatus,
   deleteAccount,
   generateQRLogin,
+  importChromeCookies,
   checkQRLoginStatus,
   updateAccountRemark,
   updateAccountAutoConfirm,
@@ -39,6 +41,7 @@ const AccountList: React.FC = () => {
     verification_url?: string;
   }>>([]);
   const [showQRModal, setShowQRModal] = useState(false);
+  const [importingChrome, setImportingChrome] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [qrStatus, setQrStatus] = useState<string>('pending');
   const [qrMessage, setQrMessage] = useState<string>('');
@@ -279,7 +282,7 @@ const AccountList: React.FC = () => {
       if (closed) return;
       const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(
-        `${scheme}://${location.host}/api/captcha/ws/${encodeURIComponent(captchaAccount.id)}`
+        `${scheme}://${location.host}${API_BASE}/api/captcha/ws/${encodeURIComponent(captchaAccount.id)}`
       );
       captchaWsRef.current = ws;
 
@@ -458,6 +461,24 @@ const AccountList: React.FC = () => {
     }
   };
 
+  const importFromChrome = async () => {
+    if (importingChrome) return;
+    setImportingChrome(true);
+    try {
+      const result = await importChromeCookies();
+      if (!result.success) {
+        notify(result.message || '未能读取 Chrome 中的闲鱼登录态');
+        return;
+      }
+      notify(result.message || '已从 Chrome 导入闲鱼登录态');
+      await loadAccounts();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '读取 Chrome 登录态失败');
+    } finally {
+      setImportingChrome(false);
+    }
+  };
+
   const startQRLogin = async () => {
     qrSessionRef.current = '';
     if (qrPollTimerRef.current) clearTimeout(qrPollTimerRef.current);
@@ -615,13 +636,24 @@ const AccountList: React.FC = () => {
         icon={Users}
         badge={<span className="status-badge status-badge-info">{accounts.length} 个账号</span>}
         actions={(
-          <button
-            onClick={startQRLogin}
-            className="ios-btn-primary flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm"
-          >
-            <QrCode className="h-4 w-4" />
-            扫码添加账号
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={importFromChrome}
+              disabled={importingChrome}
+              className="ios-btn-secondary flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm"
+            >
+              {importingChrome ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
+              {importingChrome ? '正在读取' : '读取 Chrome 登录态'}
+            </button>
+            <button
+              onClick={startQRLogin}
+              className="ios-btn-primary flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm"
+            >
+              <QrCode className="h-4 w-4" />
+              扫码添加账号
+            </button>
+          </div>
         )}
       />
 
@@ -796,9 +828,14 @@ const AccountList: React.FC = () => {
               description="扫码登录后，系统会保存授权并开始获取账号资料、商品、消息和订单状态。"
               icon={User}
               action={(
-                <button type="button" onClick={startQRLogin} className="ios-btn-primary rounded-md px-4 py-2 text-sm">
-                  扫码添加账号
-                </button>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <button type="button" onClick={importFromChrome} disabled={importingChrome} className="ios-btn-secondary rounded-md px-4 py-2 text-sm">
+                    {importingChrome ? '正在读取' : '读取 Chrome 登录态'}
+                  </button>
+                  <button type="button" onClick={startQRLogin} className="ios-btn-primary rounded-md px-4 py-2 text-sm">
+                    扫码添加账号
+                  </button>
+                </div>
               )}
             />
         )}

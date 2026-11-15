@@ -235,6 +235,35 @@ export interface ProductMaterial {
   updated_at?: string;
 }
 
+/** 一键克隆：从分享链接解析并抓取到的源商品详情。 */
+export interface ItemCloneDetail {
+  item_id: string;
+  title: string;
+  description: string;
+  price: number | null;
+  original_price: number | null;
+  transport_fee: number | null;
+  images: string[];
+  category: string;
+  category_id: string;
+  channel_cat_id: string;
+  seller_nick: string;
+  seller_id: string;
+  item_status: string;
+  quantity: string;
+  sku_count: number;
+  source_url: string;
+  share_url: string;
+  resolved_url: string;
+}
+
+export interface ItemCloneResult {
+  detail: ItemCloneDetail;
+  material: ProductMaterial | null;
+  created: boolean;
+  summary: string;
+}
+
 export interface ProductFilterRule {
   id: number;
   user_id: number;

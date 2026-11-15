@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Settings,
   ShoppingBag,
+  Sparkles,
   Star,
   UserCog,
   UserRound,
@@ -84,7 +85,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onLogout, mo
       items: [
         { id: 'messages', icon: ListFilter, label: '消息中心' },
         { id: 'auto-reply', icon: MessageSquare, label: '自动回复' },
-        { id: 'ai-reply', icon: Bot, label: 'AI 回复' },
+        { id: 'ai-reply', icon: Bot, label: 'AI 回复', children: [
+          { id: 'new-ai-reply', icon: Sparkles, label: '新AI自动回复' },
+        ] },
       ],
     },
     {
@@ -147,23 +150,47 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onLogout, mo
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
                   return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setActiveTab(item.id)}
-                      className={`group flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left transition-all ${
-                        isActive
-                          ? 'font-bold text-[#2a2416]'
-                          : 'font-medium text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
-                      }`}
-                      style={isActive ? {
-                        background: 'linear-gradient(135deg, var(--brand-300), var(--brand))',
-                        boxShadow: 'var(--shadow-brand)',
-                      } : undefined}
-                    >
-                      <Icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? 'text-[#2a2416]' : 'text-[var(--text-soft)] group-hover:text-[var(--text-muted)]'}`} />
-                      <span className="truncate text-sm">{item.label}</span>
-                    </button>
+                    <div key={item.id} className="space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(item.id)}
+                        className={`group flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left transition-all ${
+                          isActive
+                            ? 'font-bold text-[#2a2416]'
+                            : 'font-medium text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
+                        }`}
+                        style={isActive ? {
+                          background: 'linear-gradient(135deg, var(--brand-300), var(--brand))',
+                          boxShadow: 'var(--shadow-brand)',
+                        } : undefined}
+                      >
+                        <Icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? 'text-[#2a2416]' : 'text-[var(--text-soft)] group-hover:text-[var(--text-muted)]'}`} />
+                        <span className="truncate text-sm">{item.label}</span>
+                      </button>
+                      {item.children?.map((child) => {
+                        const ChildIcon = child.icon;
+                        const childActive = activeTab === child.id;
+                        return (
+                          <button
+                            key={child.id}
+                            type="button"
+                            onClick={() => setActiveTab(child.id)}
+                            className={`group flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left transition-all ${
+                              childActive
+                                ? 'font-bold text-[#2a2416]'
+                                : 'font-medium text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text)]'
+                            }`}
+                            style={childActive ? {
+                              background: 'linear-gradient(135deg, var(--brand-300), var(--brand))',
+                              boxShadow: 'var(--shadow-brand)',
+                            } : undefined}
+                          >
+                            <ChildIcon className={`h-[18px] w-[18px] shrink-0 ${childActive ? 'text-[#2a2416]' : 'text-[var(--text-soft)] group-hover:text-[var(--text-muted)]'}`} />
+                            <span className="truncate text-sm">{child.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   );
                 })}
               </div>
