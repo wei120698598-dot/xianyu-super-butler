@@ -5013,7 +5013,8 @@ class XianyuLive:
         try:
             from app.db_manager import db_manager
 
-            notifications = db_manager.get_account_notifications(self.cookie_id) or []
+            # 发货超时告警属于 delivery_timeout 事件，按账号订阅规则过滤（BUGFIX: 之前未传 event_type 导致取消类型无效）
+            notifications = db_manager.get_account_notifications(self.cookie_id, event_type="delivery_timeout") or []
         except Exception as e:
             logger.error(f"📱 读取通知渠道失败: {self._safe_str(e)}")
             return 0
@@ -5100,8 +5101,8 @@ class XianyuLive:
 
             logger.info(f"📱 开始发送消息通知 - 账号: {self.cookie_id}, 买家: {send_user_name}")
 
-            # 获取当前账号的通知配置
-            notifications = db_manager.get_account_notifications(self.cookie_id)
+            # 获取当前账号的通知配置（BUGFIX: 按 buyer_message 事件过滤，取消该消息类型后不再通知）
+            notifications = db_manager.get_account_notifications(self.cookie_id, event_type="buyer_message")
 
             if not notifications:
                 logger.warning(f"📱 账号 {self.cookie_id} 未配置消息通知，跳过通知发送")
@@ -5668,8 +5669,10 @@ class XianyuLive:
 
             from app.db_manager import db_manager
 
-            # 获取当前账号的通知配置
-            notifications = db_manager.get_account_notifications(self.cookie_id)
+            # 获取当前账号的通知配置（BUGFIX: 按通知类型映射事件过滤，取消对应类型后不再通知）
+            from app.notification_events import resolve_event_type
+            resolved_event = resolve_event_type(notification_type)
+            notifications = db_manager.get_account_notifications(self.cookie_id, event_type=resolved_event)
 
             if not notifications:
                 logger.warning("未配置消息通知，跳过Token刷新通知")
@@ -5833,8 +5836,9 @@ class XianyuLive:
         try:
             from app.db_manager import db_manager
 
-            # 获取当前账号的通知配置
-            notifications = db_manager.get_account_notifications(self.cookie_id)
+            # 获取当前账号的通知配置（BUGFIX: 按发货成功/失败事件过滤）
+            delivery_event = "delivery_success" if "成功" in (error_message or "") else "delivery_failed"
+            notifications = db_manager.get_account_notifications(self.cookie_id, event_type=delivery_event)
 
             if not notifications:
                 logger.warning("未配置消息通知，跳过自动发货通知")
