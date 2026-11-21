@@ -43,6 +43,7 @@ class XianyuReplyBot:
         self._prompt_text = prompt_text
         self._style_dir = style_dir
         self._init_system_prompts()
+        self._memory_prompt = ""
         self._init_agents()
         self.router = IntentRouter(self.agents['classify'])
         self.last_intent = None  # 记录最后一次意图
@@ -51,10 +52,10 @@ class XianyuReplyBot:
     def _init_agents(self):
         """Build each route from its section in the single prompt bundle."""
         self.agents = {
-            'classify': ClassifyAgent(self.client, self.classify_prompt, self._safe_filter, self._style_dir),
-            'price': PriceAgent(self.client, self.price_prompt + "\n\n" + self.voice_prompt, self._safe_filter, self._style_dir),
-            'tech': TechAgent(self.client, self.tech_prompt + "\n\n" + self.voice_prompt, self._safe_filter, self._style_dir),
-            'default': DefaultAgent(self.client, self.default_prompt + "\n\n" + self.voice_prompt, self._safe_filter, self._style_dir),
+            'classify': ClassifyAgent(self.client, self.classify_prompt, self._safe_filter, self._style_dir, self),
+            'price': PriceAgent(self.client, self.price_prompt + "\n\n" + self.voice_prompt, self._safe_filter, self._style_dir, self),
+            'tech': TechAgent(self.client, self.tech_prompt + "\n\n" + self.voice_prompt, self._safe_filter, self._style_dir, self),
+            'default': DefaultAgent(self.client, self.default_prompt + "\n\n" + self.voice_prompt, self._safe_filter, self._style_dir, self),
         }
 
     def _init_system_prompts(self):
@@ -82,10 +83,11 @@ class XianyuReplyBot:
         reply, _intent = self.generate_reply_with_intent(user_msg, item_desc, context)
         return reply
 
-    def generate_reply_with_intent(self, user_msg: str, item_desc: str, context: List[Dict]):
+    def generate_reply_with_intent(self, user_msg: str, item_desc: str, context: List[Dict], memory_prompt: str = ""):
         # A cancelled WebSocket worker cannot stop an in-flight executor call.
         # Serialize across reconnects too, protecting last_intent and the router.
         with self._reply_lock:
+            self._memory_prompt = memory_prompt or ""
             reply = self._generate_reply(user_msg, item_desc, context)
             return reply, self.last_intent
 
@@ -220,11 +222,12 @@ class IntentRouter:
 class BaseAgent:
     """Agent基类"""
 
-    def __init__(self, client, system_prompt, safety_filter, style_dir):
+    def __init__(self, client, system_prompt, safety_filter, style_dir, bot=None):
         self.client = client
         self.system_prompt = system_prompt
         self.safety_filter = safety_filter
         self.style_dir = style_dir
+        self.bot = bot
 
     def generate(self, user_msg: str, item_desc: str, context: str, bargain_count: int = 0) -> str:
         """生成回复模板方法"""
@@ -234,9 +237,11 @@ class BaseAgent:
 
     def _build_messages(self, user_msg: str, item_desc: str, context: str) -> List[Dict]:
         """构建消息链"""
-        learned = "" if isinstance(self, ClassifyAgent) else load_learned_prompt(self.style_dir)
+        is_classify = isinstance(self, ClassifyAgent)
+        learned = "" if is_classify else load_learned_prompt(self.style_dir)
+        memory = "" if is_classify or self.bot is None else (self.bot._memory_prompt or "")
         return [
-            {"role": "system", "content": f"【商品信息】{item_desc}\n【你与客户对话历史】{context}\n{self.system_prompt}\n{learned}"},
+            {"role": "system", "content": f"【商品信息】{item_desc}\n【你与客户对话历史】{context}\n{self.system_prompt}\n{learned}\n{memory}"},
             {"role": "user", "content": user_msg}
         ]
 

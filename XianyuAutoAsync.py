@@ -4895,6 +4895,7 @@ class XianyuLive:
         try:
             reply, intent = await asyncio.to_thread(
                 new_ai_engine.generate, send_message, description, context,
+                item_id, self.cookie_id,
             )
         except Exception as exc:
             reason = model_failure_reason(exc)
@@ -10506,7 +10507,7 @@ class XianyuLive:
                 logger.info(f"[{msg_time}] 【手动发出】 商品({item_id}): {send_message}")
                 if self._new_ai_enabled():
                     from app.new_ai_reply.engine import new_ai_engine
-                    kind = new_ai_engine.note_seller(self.cookie_id, chat_id, send_message, create_time)
+                    kind = new_ai_engine.note_seller(self.cookie_id, chat_id, send_message, create_time, item_id)
                     if kind == "echo":
                         logger.info(f"【{self.cookie_id}】新AI回复回声，不视为人工接管")
                         return
