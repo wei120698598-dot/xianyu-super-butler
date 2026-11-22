@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -99,13 +100,15 @@ async def download_item_media(detail: Dict[str, Any]) -> Dict[str, Any]:
         async def dl_image(idx: int, url: str):
             nonlocal ok_img, fail_img
             ext = _ext_from_url(url, "jpg")
-            filename = f"img_{idx + 1}.{ext}"
             try:
                 data = await _fetch(session, url, MAX_IMAGE_BYTES)
             except Exception as exc:
                 logger.warning(f"图片下载异常 {url[:80]}: {type(exc).__name__}")
                 data = None
             if data:
+                # 内容 hash 进文件名：视频源/图片变了 URL 就变，绕开浏览器缓存
+                digest = hashlib.md5(data).hexdigest()[:8]
+                filename = f"img_{idx + 1}_{digest}.{ext}"
                 (target / filename).write_bytes(data)
                 return _local_url(item_id, filename), True
             fail_img += 1
@@ -124,7 +127,6 @@ async def download_item_media(detail: Dict[str, Any]) -> Dict[str, Any]:
                 fail_vid += 1
                 continue
             ext = _ext_from_url(vurl, "mp4")
-            vname = f"video_{idx + 1}.{ext}"
             try:
                 data = await _fetch(session, vurl, MAX_VIDEO_BYTES)
             except Exception as exc:
@@ -133,6 +135,8 @@ async def download_item_media(detail: Dict[str, Any]) -> Dict[str, Any]:
             if not data:
                 fail_vid += 1
                 continue
+            vdigest = hashlib.md5(data).hexdigest()[:8]
+            vname = f"video_{idx + 1}_{vdigest}.{ext}"
             (target / vname).write_bytes(data)
 
             cover_url = ""
@@ -144,7 +148,8 @@ async def download_item_media(detail: Dict[str, Any]) -> Dict[str, Any]:
                     cdata = None
                 if cdata:
                     cext = _ext_from_url(cover, "jpg")
-                    cname = f"video_{idx + 1}_cover.{cext}"
+                    cdigest = hashlib.md5(cdata).hexdigest()[:8]
+                    cname = f"video_{idx + 1}_cover_{cdigest}.{cext}"
                     (target / cname).write_bytes(cdata)
                     cover_url = _local_url(item_id, cname)
             local_videos.append({
