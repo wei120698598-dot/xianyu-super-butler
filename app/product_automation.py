@@ -1,9 +1,13 @@
 import json
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+
+
+APP_STATIC_ROOT = os.environ.get("XIANYU_STATIC_ROOT", "/app/static")
 
 
 def _json_list(value: Any) -> List[str]:
@@ -947,3 +951,117 @@ class ProductAutomationService:
             checked, matched, changed, failed, summary, details,
         )
         return {"run_id": run_id, "summary": summary, "details": details}
+
+    async def publish_update_material(self, user_id: int, material_id: int) -> Dict[str, Any]:
+        """把素材更新到闲鱼在售商品（一键发布更新）。
+
+        流程：上传本地图片到闲鱼 CDN → 读取商品编辑详情 → 覆盖标题/描述/价格/图片 →
+        提交编辑 → 回写发布状态。视频等其它字段沿用商品原编辑详情，不做改动。
+
+        Cookie、签名、令牌刷新与风控复用 :class:`XianyuSellerAPI`。
+        """
+        from utils.xianyu_seller_api import XianyuSellerAPI
+
+        # 1. 取素材并校验归属 / 商品ID
+        with self.db.lock:
+            cursor = self.db.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM product_materials WHERE id = ? AND user_id = ?",
+                (material_id, user_id),
+            )
+            row = cursor.fetchone()
+            material = dict(zip((col[0] for col in cursor.description), row)) if row else None
+        if not material:
+            raise LookupError("素材不存在")
+        item_id = str(material.get("published_item_id") or "").strip()
+        if not item_id:
+            raise ValueError("请先填写已发布商品 ID，再执行发布更新")
+        self.require_account(user_id, str(material.get("cookie_id") or ""))
+
+        cookie_id = str(material["cookie_id"])
+        cookies_str = self.db.get_cookie(cookie_id) or ""
+        if not cookies_str:
+            raise PermissionError("账号 Cookie 为空，请先登录后再发布")
+
+        images = _json_list(material.get("images"))
+        title = str(material.get("title") or "").strip()
+        desc = str(material.get("description") or "").strip()
+        price = material.get("price")
+
+        api = XianyuSellerAPI(cookie_id, cookies_str)
+        try:
+            # 2. 上传图片：仅本地 /static/ 文件可重新上传；外链保持原样由编辑详情处理
+            image_infos: List[Dict[str, Any]] = []
+            for img in images[:9]:
+                if img.startswith("/static/"):
+                    local = os.path.join(APP_STATIC_ROOT, img[len("/static/"):])
+                    if os.path.isfile(local):
+                        uploaded = await api.upload_media(local)
+                        image_infos.append({
+                            "extraInfo": {"isH": "false", "isT": "false", "raw": "false"},
+                            "isQrCode": False,
+                            "url": uploaded["url"],
+                            "widthSize": uploaded["width"],
+                            "heightSize": uploaded["height"],
+                            "major": len(image_infos) == 0,
+                            "type": 0,
+                            "status": "done",
+                        })
+
+            # 3. 读取编辑详情，作为 payload 基底（保留视频/类目/地址/运费等原字段）
+            detail = await api.get_item_edit_detail(item_id)
+            detail_data = detail.get("itemDO") if isinstance(detail.get("itemDO"), dict) else detail
+            payload = dict(detail_data)
+
+            # 4. 覆盖要更新的字段
+            if image_infos:
+                payload["imageInfoDOList"] = image_infos
+            item_text = dict(payload.get("itemTextDTO") or {})
+            if title:
+                item_text["title"] = title
+            if desc:
+                item_text["desc"] = desc
+            if item_text:
+                payload["itemTextDTO"] = item_text
+            if price is not None:
+                price_dto = dict(payload.get("itemPriceDTO") or {})
+                price_dto["priceInCent"] = str(int(float(price) * 100))
+                payload["itemPriceDTO"] = price_dto
+            payload["itemId"] = item_id
+
+            # 5. 提交编辑
+            result = await api.edit_item(payload)
+        finally:
+            await api.close()
+
+        ret = [str(v) for v in (result.get("ret", []) if isinstance(result, dict) else [])]
+        ok = any("SUCCESS" in v for v in ret)
+        summary = (
+            f"已把素材「{title}」更新到闲鱼商品 {item_id}"
+            if ok else f"更新失败：{'; '.join(ret) if ret else '未知错误'}"
+        )
+
+        # 6. 回写状态 + 记录任务
+        with self.db.lock:
+            cursor = self.db.conn.cursor()
+            if ok:
+                cursor.execute(
+                    "UPDATE product_materials SET publish_status='published', updated_at=CURRENT_TIMESTAMP "
+                    "WHERE id=? AND user_id=?",
+                    (material_id, user_id),
+                )
+                self.db.conn.commit()
+        self._record_run(
+            user_id, cookie_id, "item_publish_update", None, "local",
+            1, 1 if ok else 0, 1 if ok else 0, 0 if ok else 1, summary,
+            [{"material_id": material_id, "item_id": item_id, "status": "updated" if ok else "failed",
+              "reason": summary}],
+        )
+        return {
+            "success": ok,
+            "item_id": item_id,
+            "title": title,
+            "summary": summary,
+            "ret": ret,
+            "uploaded_images": len(image_infos),
+        }

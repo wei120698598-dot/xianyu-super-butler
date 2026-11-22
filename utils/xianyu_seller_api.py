@@ -14,7 +14,10 @@
 
 import asyncio
 import json
+import mimetypes
+import os
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -613,6 +616,91 @@ class XianyuSellerAPI:
             spm_cnt="a21ybx.item.0.0",
         )
         return (result.get("data") or {}) or {}
+
+    # ------------------------------------------------------------------
+    # 商品发布/编辑（素材库「一键发布更新」）
+    # ------------------------------------------------------------------
+
+    async def upload_media(self, file_path: str) -> Dict[str, Any]:
+        """上传本地图片到闲鱼 CDN，返回 {url, width, height}。
+
+        上传接口是独立的 stream-upload 域名，不走 mtop 签名，但需携带登录 Cookie。
+        仅接受图片文件；发布编辑用的 imageInfoDOList 需要本账号 CDN 的 URL。
+        """
+        if not self.cookies_str:
+            raise SellerApiError("upload_media", ["Cookie 为空，无法上传图片"])
+        path = str(file_path)
+        if not os.path.isfile(path):
+            raise SellerApiError("upload_media", [f"图片不存在：{path}"])
+        guard = risk_control.registry.get(self.cookie_id)
+        if guard.is_blocked:
+            raise risk_control.RiskControlBlocked(
+                self.cookie_id, guard.remaining_seconds, guard.last_hit_reason
+            )
+
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        mime = mimetypes.guess_type(path)[0] or {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "webp": "image/webp", "gif": "image/gif",
+        }.get(ext, "application/octet-stream")
+        headers = {
+            "accept": "*/*",
+            "origin": self.BUYER_ORIGIN,
+            "referer": f"{self.BUYER_ORIGIN}/",
+            "user-agent": self.USER_AGENT,
+            "cookie": self.cookies_str.replace("\n", "").replace("\r", ""),
+        }
+        params = {"floderId": "0", "appkey": "xy_chat", "_input_charset": "utf-8"}
+        url = "https://stream-upload.goofish.com/api/upload.api"
+        session = await self._ensure_session()
+        await guard.acquire()
+        try:
+            with open(path, "rb") as handle:
+                async with session.post(
+                    url,
+                    params=params,
+                    headers=headers,
+                    data={"file": (os.path.basename(path), handle, mime)},
+                    timeout=aiohttp.ClientTimeout(total=60),
+                ) as response:
+                    result = await response.json(content_type=None)
+        except Exception as exc:
+            raise SellerApiError("upload_media", [f"上传失败：{type(exc).__name__}"]) from exc
+
+        obj = (result or {}).get("object") or {}
+        image_url = str(obj.get("url") or "")
+        if not image_url:
+            raise SellerApiError("upload_media", [f"上传未返回 URL：{str(result)[:160]}"])
+        pix = str(obj.get("pix", "0x0"))
+        try:
+            width, height = (int(part) for part in pix.split("x")[:2])
+        except (ValueError, TypeError):
+            width = height = 0
+        guard.reset()
+        return {"url": image_url, "width": width, "height": height}
+
+    async def get_item_edit_detail(self, item_id: str) -> Dict[str, Any]:
+        """读取商品的 PC 编辑页详情（完整 payload），用于在此基础上更新。"""
+        result = await self._call_buyer(
+            "mtop.idle.pc.idleitem.editDetail",
+            {"itemId": str(item_id)},
+            spm_cnt="a21ybx.publish.0.0",
+        )
+        return (result.get("data") or {}) or {}
+
+    async def edit_item(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """提交商品编辑。调用方应基于 get_item_edit_detail 的 payload 构造。"""
+        request_payload = dict(payload or {})
+        request_payload.setdefault("uniqueCode", uuid.uuid4().hex)
+        request_payload.setdefault("bizcode", "pcMainPublish")
+        request_payload.setdefault("publishScene", "pcMainPublish")
+        if "sourceId" not in request_payload:
+            request_payload["sourceId"] = str(request_payload.get("itemId") or "editDetail")
+        return await self._call_buyer(
+            "mtop.idle.pc.idleitem.edit",
+            request_payload,
+            spm_cnt="a21ybx.publish.0.0",
+        )
 
     async def get_expected_order_total(self) -> Optional[int]:
         """读取服务端认定的订单总数，用于校验拉取完整性；失败返回 None。"""

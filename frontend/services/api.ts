@@ -779,6 +779,17 @@ export const deleteProductMaterial = async (materialId: number): Promise<void> =
   await del(`/product-automation/materials/${materialId}`);
 };
 
+/** 一键发布更新：把素材更新到闲鱼在售商品（真实写操作）。 */
+export const publishUpdateMaterial = async (
+  materialId: number,
+): Promise<{ success: boolean; item_id: string; title: string; summary: string; ret: string[]; uploaded_images: number }> => {
+  const response = await post<{ success: boolean; data: { success: boolean; item_id: string; title: string; summary: string; ret: string[]; uploaded_images: number } }>(
+    `/product-automation/materials/${materialId}/publish-update`,
+    {},
+  );
+  return response.data;
+};
+
 /** 一键克隆：只解析分享链接并预览源商品，不写入素材库。 */
 export const previewItemClone = async (
   shareText: string,

@@ -42,6 +42,7 @@ import {
   getProductMaterials,
   previewItemClone,
   previewProductDeleteRule,
+  publishUpdateMaterial,
   repairProductShortLinks,
   repairPublishedProductIds,
   runProductFilterRule,
@@ -230,6 +231,34 @@ const ProductAutomation: React.FC = () => {
       notify('素材已保存', 'success');
     } catch (error) {
       notify(`素材保存失败：${(error as Error).message}`, 'error');
+    } finally {
+      setBusyKey('');
+    }
+  };
+
+  const runPublishUpdate = async () => {
+    if (!editingMaterial) return;
+    const itemId = editingMaterial.published_item_id?.trim();
+    if (!itemId) {
+      notify('请先填写「已发布商品 ID」', 'error');
+      return;
+    }
+    if (!await confirmAction(
+      `将把素材「${editingMaterial.title}」的标题、描述、价格和图片更新到闲鱼在售商品 ${itemId}。此为真实修改，视频及其它字段保持不变。确认继续？`,
+      { title: '一键发布更新', confirmLabel: '确认更新' },
+    )) return;
+    setBusyKey(`material-publish-${editingMaterial.id}`);
+    try {
+      const result = await publishUpdateMaterial(editingMaterial.id);
+      notify(result.summary || (result.success ? '发布更新成功' : '发布更新失败'), result.success ? 'success' : 'error');
+      if (result.success) {
+        setMaterials((current) => current.map((item) =>
+          item.id === editingMaterial.id ? { ...item, publish_status: 'published' } : item,
+        ));
+        setEditingMaterial((current) => current ? { ...current, publish_status: 'published' } : current);
+      }
+    } catch (error) {
+      notify(`发布更新失败：${(error as Error).message}`, 'error');
     } finally {
       setBusyKey('');
     }
@@ -1336,14 +1365,29 @@ const ProductAutomation: React.FC = () => {
                   className="ios-input mt-1.5 w-full resize-y rounded-md px-3 py-2.5 text-sm"
                 />
               </label>
-              <label className="text-xs font-bold text-gray-600">
-                已发布商品 ID
-                <input
-                  value={editingMaterial.published_item_id}
-                  onChange={(event) => setEditingMaterial({ ...editingMaterial, published_item_id: event.target.value })}
-                  className="ios-input mt-1.5 w-full rounded-md px-3 py-2.5 text-sm"
-                />
-              </label>
+              <div className="md:col-span-2">
+                <label className="text-xs font-bold text-gray-600">
+                  已发布商品 ID
+                  <input
+                    value={editingMaterial.published_item_id}
+                    onChange={(event) => setEditingMaterial({ ...editingMaterial, published_item_id: event.target.value })}
+                    className="ios-input mt-1.5 w-full rounded-md px-3 py-2.5 text-sm"
+                  />
+                </label>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void runPublishUpdate()}
+                    disabled={busyKey === `material-publish-${editingMaterial.id}`}
+                    title="把素材更新到闲鱼在售商品（真实修改，需先保存商品 ID）"
+                    className="ios-btn-primary inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    <Loader2 className={'h-4 w-4 ' + (busyKey === `material-publish-${editingMaterial.id}` ? 'animate-spin' : 'hidden')} />
+                    一键发布更新
+                  </button>
+                  <span className="text-xs text-gray-400">填写商品 ID 并保存后，把标题/描述/价格/图片更新到该闲鱼商品</span>
+                </div>
+              </div>
               <label className="text-xs font-bold text-gray-600">
                 追踪码
                 <input

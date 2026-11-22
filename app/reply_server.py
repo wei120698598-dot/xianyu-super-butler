@@ -5575,6 +5575,20 @@ def delete_product_material(
         _raise_product_automation_error(error)
 
 
+@app.post("/product-automation/materials/{material_id}/publish-update")
+async def publish_update_material(
+    material_id: int,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """把素材的一键发布更新执行到闲鱼在售商品（真实写操作）。"""
+    try:
+        return await product_automation.publish_update_material(
+            current_user["user_id"], material_id
+        )
+    except Exception as error:
+        _raise_product_automation_error(error)
+
+
 @app.get("/product-automation/filter-rules")
 def get_product_filter_rules(
     current_user: Dict[str, Any] = Depends(get_current_user),
