@@ -224,6 +224,7 @@ export interface ProductMaterial {
   category: string;
   price?: number;
   images: string[];
+  videos?: CloneVideo[];
   source_url: string;
   short_url: string;
   delivery_content: string;
@@ -236,6 +237,12 @@ export interface ProductMaterial {
 }
 
 /** 一键克隆：从分享链接解析并抓取到的源商品详情。 */
+export interface CloneVideo {
+  url: string;
+  cover?: string;
+  poster?: string;
+}
+
 export interface ItemCloneDetail {
   item_id: string;
   title: string;
@@ -244,6 +251,8 @@ export interface ItemCloneDetail {
   original_price: number | null;
   transport_fee: number | null;
   images: string[];
+  videos?: CloneVideo[];
+  media_download?: { images_ok: number; images_fail: number; videos_ok: number; videos_fail: number };
   category: string;
   category_id: string;
   channel_cat_id: string;

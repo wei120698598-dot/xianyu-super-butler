@@ -211,6 +211,26 @@ def normalize_item_detail(data: Dict[str, Any], link: Dict[str, str]) -> Dict[st
         price = _to_float(item.get("originalPrice"))
     sku_rows = item.get("skuList") or item.get("idleItemSkuList") or []
 
+    # 视频商品：详情在 itemDO.videoPlayInfo 里，主图可能是空，视频地址在
+    # playUrl / sd480pUrl / ld320pUrl，封面在 url（jpg）。全部抽出来交给下载层。
+    videos: List[Dict[str, str]] = []
+    play = item.get("videoPlayInfo")
+    if isinstance(play, dict):
+        cover = _image_url(play.get("url"))
+        candidates = [
+            play.get("playUrl"),
+            play.get("sd480pUrl"),
+            play.get("ld320pUrl"),
+        ]
+        for candidate in candidates:
+            video_url = _image_url(candidate)
+            if video_url.lower().endswith(".mp4") or "video" in video_url:
+                videos.append({"url": video_url, "cover": cover})
+                break
+        # 视频封面也是素材，补进图片列表
+        if cover and cover not in images:
+            images.append(cover)
+
     return {
         "item_id": str(link["item_id"]),
         "title": str(item.get("title") or "").strip(),
@@ -219,6 +239,7 @@ def normalize_item_detail(data: Dict[str, Any], link: Dict[str, str]) -> Dict[st
         "original_price": _to_float(item.get("originalPrice")),
         "transport_fee": _to_float(item.get("transportFee")),
         "images": images[:9],
+        "videos": videos[:3],
         "category": category,
         "category_id": str(item.get("categoryId") or track.get("categoryId") or "").strip(),
         "channel_cat_id": str(track.get("channelCatId") or "").strip(),

@@ -5820,9 +5820,12 @@ async def clone_item_from_share(
     payload: ItemCloneIn,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """解析分享链接 → 拉取商品详情 → 写入素材库草稿（一键克隆）。"""
+    """解析分享链接 → 拉取商品详情 → 下载图片/视频到本地 → 写入素材库草稿（一键克隆）。"""
     try:
         detail = await _resolve_clone_detail(payload, current_user)
+        # 素材完整：把外链图片和视频真正下载到本地，再把 URL 换成本地路径入库
+        from utils.media_downloader import download_item_media
+        detail = await download_item_media(detail)
         data = product_automation.save_clone_material(
             current_user["user_id"], payload.cookie_id.strip(), detail
         )

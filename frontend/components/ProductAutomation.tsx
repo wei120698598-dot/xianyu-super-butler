@@ -552,7 +552,15 @@ const ProductAutomation: React.FC = () => {
               <div className="grid gap-5 p-4 md:grid-cols-[220px_1fr]">
                 <div className="space-y-2">
                   <div className="aspect-square overflow-hidden rounded-lg bg-gray-100">
-                    {cloneDetail.images[0] ? (
+                    {cloneDetail.videos?.[0] ? (
+                      <video
+                        src={normalizeImage(cloneDetail.videos[0].url)}
+                        poster={cloneDetail.videos[0].poster ? normalizeImage(cloneDetail.videos[0].poster) : undefined}
+                        className="h-full w-full object-cover"
+                        controls
+                        playsInline
+                      />
+                    ) : cloneDetail.images[0] ? (
                       <img
                         src={normalizeImage(cloneDetail.images[0])}
                         alt={cloneDetail.title}
@@ -599,6 +607,9 @@ const ProductAutomation: React.FC = () => {
                     <span>商品 ID：<span className="font-mono text-gray-700">{cloneDetail.item_id}</span></span>
                     <span>卖家：{cloneDetail.seller_nick || '未知'}</span>
                     <span>图片：{cloneDetail.images.length} 张</span>
+                    {cloneDetail.videos && cloneDetail.videos.length > 0 && (
+                      <span>视频：{cloneDetail.videos.length} 个</span>
+                    )}
                     {cloneDetail.sku_count > 0 && <span>规格：{cloneDetail.sku_count} 个</span>}
                     {cloneDetail.transport_fee != null && <span>运费：¥{cloneDetail.transport_fee}</span>}
                   </div>
@@ -675,7 +686,7 @@ const ProductAutomation: React.FC = () => {
                     <tr key={material.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3" data-label="素材">
                         <div className="flex items-center gap-3">
-                          <div className="h-12 w-12 flex-none overflow-hidden rounded bg-gray-100">
+                          <div className="relative h-12 w-12 flex-none overflow-hidden rounded bg-gray-100">
                             {material.images[0] ? (
                               <img
                                 src={normalizeImage(material.images[0])}
@@ -683,7 +694,19 @@ const ProductAutomation: React.FC = () => {
                                 className="h-full w-full object-cover"
                                 referrerPolicy="no-referrer"
                               />
+                            ) : material.videos?.[0]?.poster ? (
+                              <img
+                                src={normalizeImage(material.videos[0].poster)}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
                             ) : <Archive className="m-3 h-6 w-6 text-gray-400" />}
+                            {material.videos && material.videos.length > 0 && (
+                              <span className="absolute bottom-0 right-0 rounded-tl bg-black/60 px-1 text-[10px] text-white">
+                                ▶{material.videos.length}
+                              </span>
+                            )}
                           </div>
                           <div className="min-w-0">
                             <div className="max-w-72 truncate font-bold text-gray-900">{material.title}</div>

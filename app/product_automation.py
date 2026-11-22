@@ -80,6 +80,7 @@ class ProductAutomationService:
                     category TEXT DEFAULT '',
                     price REAL,
                     images TEXT DEFAULT '[]',
+                    videos TEXT DEFAULT '[]',
                     source_url TEXT DEFAULT '',
                     short_url TEXT DEFAULT '',
                     delivery_content TEXT DEFAULT '',
@@ -140,6 +141,10 @@ class ProductAutomationService:
                     ON automation_task_runs(user_id, created_at DESC);
                 """
             )
+            # 兼容已有库：补充 videos 列
+            cols = {row[1] for row in cursor.execute("PRAGMA table_info(product_materials)").fetchall()}
+            if "videos" not in cols:
+                cursor.execute("ALTER TABLE product_materials ADD COLUMN videos TEXT DEFAULT '[]'")
             self.db.conn.commit()
 
     def _owned_accounts(self, user_id: int) -> Dict[str, str]:
@@ -229,6 +234,7 @@ class ProductAutomationService:
             rows = [_as_dict(cursor, row) for row in cursor.fetchall()]
         for row in rows:
             row["images"] = _json_list(row.get("images"))
+            row["videos"] = _json_list(row.get("videos"))
         return rows
 
     def update_material(self, user_id: int, material_id: int, changes: Dict[str, Any]) -> Dict[str, Any]:
@@ -238,6 +244,7 @@ class ProductAutomationService:
             "category",
             "price",
             "images",
+            "videos",
             "source_url",
             "short_url",
             "delivery_content",
@@ -251,7 +258,7 @@ class ProductAutomationService:
             if key not in allowed:
                 continue
             updates.append(f"{key} = ?")
-            params.append(json.dumps(value, ensure_ascii=False) if key == "images" else value)
+            params.append(json.dumps(value, ensure_ascii=False) if key in ("images", "videos") else value)
         if not updates:
             raise ValueError("没有可更新的字段")
         params.extend([material_id, user_id])
@@ -274,6 +281,7 @@ class ProductAutomationService:
             )
             result = _as_dict(cursor, cursor.fetchone())
         result["images"] = _json_list(result.get("images"))
+        result["videos"] = _json_list(result.get("videos"))
         return result
 
     def delete_material(self, user_id: int, material_id: int) -> bool:
@@ -304,6 +312,7 @@ class ProductAutomationService:
             raise ValueError("源商品没有标题，无法克隆")
 
         images = _json_list(detail.get("images"))
+        videos = [v for v in (detail.get("videos") or []) if isinstance(v, dict)]
         source_url = str(detail.get("source_url") or "").strip() or (
             f"https://www.goofish.com/item?id={item_id}"
         )
@@ -327,8 +336,8 @@ class ProductAutomationService:
                 """
                 INSERT INTO product_materials (
                     user_id, cookie_id, source_item_id, title, description, category,
-                    price, images, source_url, short_url, publish_status, publish_trace_code
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+                    price, images, videos, source_url, short_url, publish_status, publish_trace_code
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
                 ON CONFLICT(user_id, cookie_id, source_item_id) DO UPDATE SET
                     title = excluded.title,
                     description = CASE
@@ -344,6 +353,10 @@ class ProductAutomationService:
                         WHEN product_materials.images = '[]' THEN excluded.images
                         ELSE product_materials.images
                     END,
+                    videos = CASE
+                        WHEN product_materials.videos = '[]' THEN excluded.videos
+                        ELSE product_materials.videos
+                    END,
                     source_url = excluded.source_url,
                     short_url = excluded.short_url,
                     updated_at = CURRENT_TIMESTAMP
@@ -357,6 +370,7 @@ class ProductAutomationService:
                     category,
                     price,
                     json.dumps(images, ensure_ascii=False),
+                    json.dumps(videos, ensure_ascii=False),
                     source_url,
                     short_url,
                     trace,
@@ -373,6 +387,7 @@ class ProductAutomationService:
             material = _as_dict(cursor, cursor.fetchone())
 
         material["images"] = _json_list(material.get("images"))
+        material["videos"] = _json_list(material.get("videos"))
         summary = f"已克隆「{title}」到素材库" if created else f"已刷新素材「{title}」"
         self._record_run(
             user_id,
