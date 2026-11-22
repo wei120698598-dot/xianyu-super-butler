@@ -49,6 +49,7 @@ import {
   saveProductFilterRule,
   updateProductMaterial,
 } from '../services/api';
+import { API_BASE } from '../lib/request';
 import { confirmAction, notify } from '../services/feedback';
 import {
   EmptyState,
@@ -108,6 +109,8 @@ const formatDate = (value?: string) => {
 
 const normalizeImage = (value?: string) => {
   if (!value) return '';
+  // 克隆素材下载到本地的路径以 /static/ 开头，经网关访问需补 API_BASE 前缀
+  if (value.startsWith('/static/')) return `${API_BASE}${value}`;
   return value.startsWith('//') ? `https:${value}` : value;
 };
 
