@@ -217,6 +217,7 @@ const ProductAutomation: React.FC = () => {
         category: editingMaterial.category,
         price: editingMaterial.price,
         images: editingMaterial.images,
+        videos: editingMaterial.videos || [],
         source_url: editingMaterial.source_url,
         short_url: editingMaterial.short_url,
         delivery_content: editingMaterial.delivery_content,
@@ -1203,6 +1204,85 @@ const ProductAutomation: React.FC = () => {
               </button>
             </div>
             <div className="modal-body grid gap-4 md:grid-cols-2">
+              {/* 媒体预览：与被克隆商品详情展示一致（视频优先 + 图片缩略图） */}
+              <div className="md:col-span-2 rounded-lg border border-gray-200 p-3">
+                <div className="mb-2 text-xs font-bold text-gray-600">图片 / 视频预览</div>
+                <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+                  <div className="space-y-2">
+                    <div className="aspect-square overflow-hidden rounded-lg bg-gray-100">
+                      {editingMaterial.videos?.[0] ? (
+                        <video
+                          src={normalizeImage(editingMaterial.videos[0].url)}
+                          poster={editingMaterial.videos[0].poster ? normalizeImage(editingMaterial.videos[0].poster) : undefined}
+                          className="h-full w-full object-cover"
+                          controls
+                          playsInline
+                        />
+                      ) : editingMaterial.images[0] ? (
+                        <img
+                          src={normalizeImage(editingMaterial.images[0])}
+                          alt={editingMaterial.title}
+                          className="h-full w-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-gray-400"><Archive className="h-10 w-10" /></div>
+                      )}
+                    </div>
+                    {(editingMaterial.images.length > 1 || (editingMaterial.videos?.length || 0) > 1) && (
+                      <div className="flex gap-2 overflow-x-auto">
+                        {editingMaterial.images.length > 1 && editingMaterial.images.slice(1).map((image, index) => (
+                          <img
+                            key={`img-${index}`}
+                            src={normalizeImage(image)}
+                            alt=""
+                            className="h-14 w-14 flex-none rounded object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        ))}
+                        {editingMaterial.videos?.slice(1).map((video, index) => (
+                          <video
+                            key={`vid-${index}`}
+                            src={normalizeImage(video.url)}
+                            poster={video.poster ? normalizeImage(video.poster) : undefined}
+                            className="h-14 w-14 flex-none rounded object-cover bg-black"
+                            controls
+                            playsInline
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 space-y-3">
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">{editingMaterial.title || '未命名素材'}</h3>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                        <span className="text-xl font-bold text-red-600">
+                          {editingMaterial.price == null ? '价格未设置' : `¥${editingMaterial.price}`}
+                        </span>
+                        {editingMaterial.category && (
+                          <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{editingMaterial.category}</span>
+                        )}
+                        {editingMaterial.publish_status === 'published' && (
+                          <span className="rounded bg-green-50 px-2 py-0.5 text-xs text-green-700">已发布</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 sm:grid-cols-3">
+                      <span>商品 ID：<span className="font-mono text-gray-700">{editingMaterial.source_item_id}</span></span>
+                      <span>图片：{editingMaterial.images.length} 张</span>
+                      {(editingMaterial.videos?.length || 0) > 0 && (
+                        <span>视频：{editingMaterial.videos!.length} 个</span>
+                      )}
+                    </div>
+                    {editingMaterial.description && (
+                      <p className="whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 text-sm text-gray-700">
+                        {editingMaterial.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
               <label className="text-xs font-bold text-gray-600 md:col-span-2">
                 标题
                 <input
