@@ -952,11 +952,14 @@ class ProductAutomationService:
         )
         return {"run_id": run_id, "summary": summary, "details": details}
 
-    async def publish_update_material(self, user_id: int, material_id: int) -> Dict[str, Any]:
+    async def publish_update_material(self, user_id: int, material_id: int, force_without_video: bool = False) -> Dict[str, Any]:
         """把素材更新到闲鱼在售商品（一键发布更新）。
 
-        流程：上传本地图片到闲鱼 CDN → 读取商品编辑详情 → 覆盖标题/描述/价格/图片 →
-        提交编辑 → 回写发布状态。视频等其它字段沿用商品原编辑详情，不做改动。
+        流程：读取商品编辑详情 → 覆盖标题/描述/价格/图片 → 提交编辑 → 回写发布状态。
+
+        视频保护：闲鱼 PC 端发布/编辑接口不支持商品视频；若商品当前带视频，用图片
+        覆盖 imageInfoDOList 会把视频弄丢。因此检测到商品含视频时默认拒绝执行，
+        除非调用方显式传入 ``force_without_video=True``（仍会丢失视频，知悉风险）。
 
         Cookie、签名、令牌刷新与风控复用 :class:`XianyuSellerAPI`。
         """
@@ -990,7 +993,26 @@ class ProductAutomationService:
 
         api = XianyuSellerAPI(cookie_id, cookies_str)
         try:
-            # 2. 上传图片：仅本地 /static/ 文件可重新上传；外链保持原样由编辑详情处理
+            # 2. 先读取编辑详情，作为 payload 基底（保留类目/地址/运费等原字段）
+            detail = await api.get_item_edit_detail(item_id)
+            detail_data = detail.get("itemDO") if isinstance(detail.get("itemDO"), dict) else detail
+            payload = dict(detail_data)
+
+            # 3. 视频保护：检测商品当前是否带视频。带视频时用图片覆盖会弄丢视频。
+            has_video = bool(detail_data.get("videoPlayInfo")) or any(
+                isinstance(img, dict) and (
+                    img.get("videoPlayInfo") or str(img.get("type", "")) in ("1", "2")
+                    or (isinstance(img.get("extraInfo"), dict) and img["extraInfo"].get("isVideo"))
+                )
+                for img in (detail_data.get("imageInfoDOList") or [])
+            )
+            if has_video and not force_without_video:
+                raise ValueError(
+                    "该商品当前带视频；闲鱼 PC 接口不支持商品视频，用图片覆盖会删除视频。"
+                    "请先在闲鱼 App 手动处理视频，或显式确认“仍要发布（会丢失视频）”。"
+                )
+
+            # 4. 上传图片：仅本地 /static/ 文件可重新上传；外链保持原样由编辑详情处理
             image_infos: List[Dict[str, Any]] = []
             for img in images[:9]:
                 if img.startswith("/static/"):
@@ -1008,12 +1030,7 @@ class ProductAutomationService:
                             "status": "done",
                         })
 
-            # 3. 读取编辑详情，作为 payload 基底（保留视频/类目/地址/运费等原字段）
-            detail = await api.get_item_edit_detail(item_id)
-            detail_data = detail.get("itemDO") if isinstance(detail.get("itemDO"), dict) else detail
-            payload = dict(detail_data)
-
-            # 4. 覆盖要更新的字段
+            # 5. 覆盖要更新的字段（仅当商品无视频，或调用方知悉强制时，才覆盖图片）
             if image_infos:
                 payload["imageInfoDOList"] = image_infos
             item_text = dict(payload.get("itemTextDTO") or {})

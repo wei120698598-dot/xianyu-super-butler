@@ -656,11 +656,19 @@ class XianyuSellerAPI:
         await guard.acquire()
         try:
             with open(path, "rb") as handle:
+                form = aiohttp.FormData()
+                form.add_field(
+                    "file", handle,
+                    filename=os.path.basename(path),
+                    content_type=mime,
+                )
+                # 不手动传 content-type，让 aiohttp 生成带 boundary 的 multipart 头
+                upload_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
                 async with session.post(
                     url,
                     params=params,
-                    headers=headers,
-                    data={"file": (os.path.basename(path), handle, mime)},
+                    headers=upload_headers,
+                    data=form,
                     timeout=aiohttp.ClientTimeout(total=60),
                 ) as response:
                     result = await response.json(content_type=None)

@@ -244,12 +244,21 @@ const ProductAutomation: React.FC = () => {
       return;
     }
     if (!await confirmAction(
-      `将把素材「${editingMaterial.title}」的标题、描述、价格和图片更新到闲鱼在售商品 ${itemId}。此为真实修改，视频及其它字段保持不变。确认继续？`,
+      `将把素材「${editingMaterial.title}」的标题、描述、价格和图片更新到闲鱼在售商品 ${itemId}。此为真实修改，确认继续？`,
       { title: '一键发布更新', confirmLabel: '确认更新' },
     )) return;
     setBusyKey(`material-publish-${editingMaterial.id}`);
     try {
-      const result = await publishUpdateMaterial(editingMaterial.id);
+      let result = await publishUpdateMaterial(editingMaterial.id);
+      // 商品带视频时，PC 接口发布会丢失视频 —— 让用户知悉风险后再决定强制发布
+      if (result.detail && !result.success) {
+        const force = await confirmAction(
+          `${result.detail}\n\n将只更新文字和图片，视频会被删除。建议先在闲鱼 App 手动处理视频。仍要继续吗？`,
+          { title: '视频会被删除', confirmLabel: '仍要发布' },
+        );
+        if (!force) return;
+        result = await publishUpdateMaterial(editingMaterial.id, true);
+      }
       notify(result.summary || (result.success ? '发布更新成功' : '发布更新失败'), result.success ? 'success' : 'error');
       if (result.success) {
         setMaterials((current) => current.map((item) =>

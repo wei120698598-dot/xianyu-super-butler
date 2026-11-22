@@ -782,12 +782,22 @@ export const deleteProductMaterial = async (materialId: number): Promise<void> =
 /** 一键发布更新：把素材更新到闲鱼在售商品（真实写操作）。 */
 export const publishUpdateMaterial = async (
   materialId: number,
-): Promise<{ success: boolean; item_id: string; title: string; summary: string; ret: string[]; uploaded_images: number }> => {
-  const response = await post<{ success: boolean; data: { success: boolean; item_id: string; title: string; summary: string; ret: string[]; uploaded_images: number } }>(
-    `/product-automation/materials/${materialId}/publish-update`,
-    {},
-  );
-  return response.data;
+  forceWithoutVideo: boolean = false,
+): Promise<{ success: boolean; item_id: string; title: string; summary: string; ret: string[]; uploaded_images: number; detail?: string }> => {
+  try {
+    const response = await post<{ success: boolean; data: { success: boolean; item_id: string; title: string; summary: string; ret: string[]; uploaded_images: number } }>(
+      `/product-automation/materials/${materialId}/publish-update`,
+      { force_without_video: forceWithoutVideo },
+    );
+    return response.data;
+  } catch (error) {
+    // 视频保护触发时后端返回 400，detail 里带提示，交给调用方二次确认
+    const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+    if (detail && detail.includes('视频')) {
+      return { success: false, item_id: '', title: '', summary: detail, ret: [], uploaded_images: 0, detail };
+    }
+    throw error;
+  }
 };
 
 /** 一键克隆：只解析分享链接并预览源商品，不写入素材库。 */
