@@ -1212,12 +1212,16 @@ const ProductAutomation: React.FC = () => {
                     <div className="aspect-square overflow-hidden rounded-lg bg-gray-100">
                       {editingMaterial.videos?.[0] ? (
                         <video
-                          src={normalizeImage(editingMaterial.videos[0].url)}
-                          poster={editingMaterial.videos[0].poster ? normalizeImage(editingMaterial.videos[0].poster) : undefined}
+                          poster={editingMaterial.videos[0].poster ? normalizeImage(editingMaterial.videos[0].poster) : (editingMaterial.videos[0].origin_cover ? normalizeImage(editingMaterial.videos[0].origin_cover) : undefined)}
                           className="h-full w-full object-cover"
                           controls
                           playsInline
-                        />
+                        >
+                          <source src={normalizeImage(editingMaterial.videos[0].url)} type="video/mp4" />
+                          {editingMaterial.videos[0].origin_url && (
+                            <source src={normalizeImage(editingMaterial.videos[0].origin_url)} type="video/mp4" />
+                          )}
+                        </video>
                       ) : editingMaterial.images[0] ? (
                         <img
                           src={normalizeImage(editingMaterial.images[0])}
@@ -1243,12 +1247,14 @@ const ProductAutomation: React.FC = () => {
                         {editingMaterial.videos?.slice(1).map((video, index) => (
                           <video
                             key={`vid-${index}`}
-                            src={normalizeImage(video.url)}
-                            poster={video.poster ? normalizeImage(video.poster) : undefined}
+                            poster={video.poster ? normalizeImage(video.poster) : (video.origin_cover ? normalizeImage(video.origin_cover) : undefined)}
                             className="h-14 w-14 flex-none rounded object-cover bg-black"
                             controls
                             playsInline
-                          />
+                          >
+                            <source src={normalizeImage(video.url)} type="video/mp4" />
+                            {video.origin_url && <source src={normalizeImage(video.origin_url)} type="video/mp4" />}
+                          </video>
                         ))}
                       </div>
                     )}

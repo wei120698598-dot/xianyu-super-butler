@@ -21,6 +21,32 @@ def _json_list(value: Any) -> List[str]:
     return []
 
 
+def _json_objects(value: Any) -> List[dict]:
+    """JSON-encoded list of objects (e.g. videos). Unlike _json_list, keep dicts."""
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if not isinstance(value, str) or not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    result = []
+    for item in parsed:
+        if isinstance(item, dict):
+            result.append(item)
+        elif isinstance(item, str):  # legacy: dict was str()-ified by _json_list
+            try:
+                revived = json.loads(item.replace("'", '"'))
+                if isinstance(revived, dict):
+                    result.append(revived)
+            except json.JSONDecodeError:
+                pass
+    return result
+
+
 def _json_value(value: Any, fallback: Any) -> Any:
     if not isinstance(value, str) or not value:
         return fallback
@@ -234,7 +260,7 @@ class ProductAutomationService:
             rows = [_as_dict(cursor, row) for row in cursor.fetchall()]
         for row in rows:
             row["images"] = _json_list(row.get("images"))
-            row["videos"] = _json_list(row.get("videos"))
+            row["videos"] = _json_objects(row.get("videos"))
         return rows
 
     def update_material(self, user_id: int, material_id: int, changes: Dict[str, Any]) -> Dict[str, Any]:
@@ -281,7 +307,7 @@ class ProductAutomationService:
             )
             result = _as_dict(cursor, cursor.fetchone())
         result["images"] = _json_list(result.get("images"))
-        result["videos"] = _json_list(result.get("videos"))
+        result["videos"] = _json_objects(result.get("videos"))
         return result
 
     def delete_material(self, user_id: int, material_id: int) -> bool:
@@ -384,7 +410,7 @@ class ProductAutomationService:
             material = _as_dict(cursor, cursor.fetchone())
 
         material["images"] = _json_list(material.get("images"))
-        material["videos"] = _json_list(material.get("videos"))
+        material["videos"] = _json_objects(material.get("videos"))
         summary = f"已克隆「{title}」到素材库" if created else f"已刷新素材「{title}」"
         self._record_run(
             user_id,

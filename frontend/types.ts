@@ -241,6 +241,8 @@ export interface CloneVideo {
   url: string;
   cover?: string;
   poster?: string;
+  origin_url?: string;
+  origin_cover?: string;
 }
 
 export interface ItemCloneDetail {

@@ -156,6 +156,9 @@ async def download_item_media(detail: Dict[str, Any]) -> Dict[str, Any]:
                 "url": _local_url(item_id, vname),
                 "cover": cover_url,
                 "poster": cover_url,
+                # 保留源站外链作为回退：本地路径在某些部署（网关/鉴权）下可能无法播放
+                "origin_url": vurl,
+                "origin_cover": video.get("cover") or video.get("poster") or "",
             })
             ok_vid += 1
 
