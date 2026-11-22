@@ -353,10 +353,7 @@ class ProductAutomationService:
                         WHEN product_materials.images = '[]' THEN excluded.images
                         ELSE product_materials.images
                     END,
-                    videos = CASE
-                        WHEN product_materials.videos = '[]' THEN excluded.videos
-                        ELSE product_materials.videos
-                    END,
+                    videos = excluded.videos,
                     source_url = excluded.source_url,
                     short_url = excluded.short_url,
                     updated_at = CURRENT_TIMESTAMP

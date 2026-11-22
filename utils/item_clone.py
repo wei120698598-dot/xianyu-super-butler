@@ -213,14 +213,16 @@ def normalize_item_detail(data: Dict[str, Any], link: Dict[str, str]) -> Dict[st
 
     # 视频商品：详情在 itemDO.videoPlayInfo 里，主图可能是空，视频地址在
     # playUrl / sd480pUrl / ld320pUrl，封面在 url（jpg）。全部抽出来交给下载层。
+    # 注意：playUrl(xianyu-video.alicdn.com) 是 HEVC/H.265，浏览器普遍不支持；
+    # sd480pUrl/ld320pUrl(cloud.video.taobao.com) 是 H.264，浏览器可直接播放，优先取。
     videos: List[Dict[str, str]] = []
     play = item.get("videoPlayInfo")
     if isinstance(play, dict):
         cover = _image_url(play.get("url"))
         candidates = [
-            play.get("playUrl"),
             play.get("sd480pUrl"),
             play.get("ld320pUrl"),
+            play.get("playUrl"),
         ]
         for candidate in candidates:
             video_url = _image_url(candidate)
